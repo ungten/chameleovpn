@@ -38,9 +38,11 @@ export default function Tariffs({ ...props }: { tariffs: Tariff[] }) {
                 {/* Welcome */}
                 <div>
                     <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-center">
+                        {/* HEADER */}
                         <div>
-                            <p className="text-muted-foreground text-sm">Выберите подходящий тариф</p>
-                            <h1 className="mt-1 text-2xl font-bold tracking-tight">Тарифы</h1>
+                            <h1 className="text-2xl font-bold tracking-tight">Тарифы</h1>
+
+                            <p className="text-muted-foreground mt-2 text-sm">Выберите подходящий тариф</p>
                         </div>
                     </div>
                 </div>
@@ -111,7 +113,7 @@ export default function Tariffs({ ...props }: { tariffs: Tariff[] }) {
                                     </div>
                                 </div>
 
-                                <Button onClick={() => selectTariff(tariff.id)}>Выбрать тариф</Button>
+                                <Button className='mt-5 inline-flex justify-center h-10 items-center rounded-xl bg-primary px-5 text-sm font-medium text-white hover:bg-green-700' onClick={() => selectTariff(tariff.id)}>Выбрать тариф</Button>
                             </div>
                         </div>
                     ))}

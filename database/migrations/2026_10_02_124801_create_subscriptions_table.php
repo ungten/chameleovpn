@@ -15,7 +15,7 @@ return new class extends Migration {
             $table->timestamps();
             $table->foreignId('user_id')->constrained()->onDelete('cascade');
             $table->foreignId('tariff_id')->constrained()->onDelete('cascade');
-            $table->decimal('traffic_used', 10, 2)->default(0);
+            $table->foreignId('payment_id')->constrained()->onDelete('cascade');
             $table->dateTime('started_at');
             $table->dateTime('expires_at');
             $table->enum('status', [

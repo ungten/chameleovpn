@@ -21,11 +21,6 @@ return new class extends Migration {
                 ->constrained()
                 ->onDelete('cascade');
 
-            $table->foreignId('subscription_id')
-                ->nullable()
-                ->constrained()
-                ->nullOnDelete();
-
             $table->decimal('amount', 10, 2);
 
             $table->string('external_id')->unique();

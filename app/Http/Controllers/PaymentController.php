@@ -13,7 +13,7 @@ class PaymentController extends Controller
     public function show()
     {
         $payments = Payment::with('tariff')
-            ->where('user_id', auth()->id())
+            ->where('user_id', '=',auth()->id())
             ->latest()
             ->get();
 
@@ -38,7 +38,6 @@ class PaymentController extends Controller
             'external_id' => Str::random(5),
             'user_id' => auth()->id(),
             'tariff_id' => $tariff->id,
-            'subscription_id' => NULL,
             'amount' => $tariff->price,
             'status' => 'pending',
             // 'payment_url' => $payment_url_from_payment_system

@@ -8,11 +8,54 @@ use Inertia\Inertia;
 use App\Models\Tariff;
 
 Route::get('/', function () {
+
+    $tariffs = Tariff::all();
+
     return Inertia::render('welcome', [
         'canRegister' => Route::has('register'),
         'isAuth' => auth()->check(),
+        'tariffs' => $tariffs,
     ]);
 })->name('home');
+
+
+
+Route::get('/privacy', function () {
+
+    return Inertia::render('privacy', [
+        'canRegister' => Route::has('register'),
+        'isAuth' => auth()->check(),
+
+    ]);
+})->name('privacy');
+
+Route::get('/terms', function () {
+
+    return Inertia::render('terms', [
+        'canRegister' => Route::has('register'),
+        'isAuth' => auth()->check(),
+
+    ]);
+})->name('terms');
+
+Route::get('/offer', function () {
+
+    return Inertia::render('offer', [
+        'canRegister' => Route::has('register'),
+        'isAuth' => auth()->check(),
+
+    ]);
+})->name('offer');
+
+Route::get('/refund', function () {
+
+    return Inertia::render('refund', [
+        'canRegister' => Route::has('register'),
+        'isAuth' => auth()->check(),
+
+    ]);
+})->name('refund');
+
 
 Route::middleware(['auth'])->group(function () {
     Route::get('dashboard', function () {
@@ -30,8 +73,6 @@ Route::middleware(['auth'])->group(function () {
         ->name('payments.create');
 
     Route::get('payments', [PaymentController::class, 'show'])->name('payments.show');
-
-    
 
 });
 

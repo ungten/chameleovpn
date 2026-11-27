@@ -3,266 +3,137 @@
 namespace App\Http\Controllers\Admin;
 
 use App\Http\Controllers\Controller;
-use App\Http\Requests\TariffFormRequest;
-use App\Models\Course;
-use App\Models\Module;
-use App\Models\Lesson;
-use App\Models\Exercise;
 use App\Models\Payment;
-use App\Models\Tariff;
+use App\Models\Subscription;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Inertia\Inertia;
 
 class AdminPaymentsController extends Controller
 {
-    /**
-     * Список всех тарифов для админа
-     */
-    public function index()
+    public function index(Request $request)
     {
-        $payments = Payment::all();
+        $query = Payment::with(['tariff', 'user', 'subscription'])
+            ->latest();
+
+        // Поиск
+        if ($request->filled('search')) {
+            $search = $request->search;
+
+            $query->where(function ($q) use ($search) {
+                $q->where('id', $search)
+                    ->orWhere('external_id', 'like', "%{$search}%")
+                    ->orWhereHas('user', function ($userQuery) use ($search) {
+                        $userQuery->where('telegram_id', 'like', "%{$search}%")
+                            ->orWhere('name', 'like', "%{$search}%");
+                    });
+            });
+        }
+
+        // Фильтр по статусу
+        if ($request->filled('status') && $request->status !== 'all') {
+            $query->where('status', $request->status);
+        }
+
+        $payments = $query->paginate(20)->withQueryString();
 
         return Inertia::render('Admin/Payments/Index', [
-            'payments' => $payments
+            'payments' => $payments,
+
+            'filters' => $request->only('search', 'status'),
+
+            'stats' => [
+                'total' => Payment::count(),
+                'paid' => Payment::where('status', 'succeeded')->count(),
+                'pending' => Payment::where('status', 'pending')->count(),
+                'cancelled' => Payment::where('status', 'cancelled')->count(),
+                'revenue' => Payment::where('status', 'succeeded')->sum('amount'),
+            ],
         ]);
     }
 
     /**
-     * Форма создания тарифа
+     * Изменение статуса платежа
      */
-    public function create()
+    public function updateStatus(Request $request, Payment $payment)
     {
-        return Inertia::render('Admin/Tariffs/form');
-    }
+        $validated = $request->validate([
+            'status' => 'required|in:pending,succeeded,cancelled',
+        ]);
 
-    /**
-     * Сохранение нового тарифа
-     */
-    public function store(TariffFormRequest $request)
-    {
-
-
-        $tariff = Tariff::create(
-            [
-                'name' => $request->name,
-                'descr' => $request->descr,
-                'max_devices' => $request->max_devices,
-                'duration_day' => $request->duration_day,
-                'price' => $request->price,
-                'old_price' => $request->old_price,
-                'updated_at' => now(),
-                'created_at' => now(),
-            ]
-        );
-
-        if ($tariff) {
-            return redirect()->route('admin.tariffs.index')->with('success', 'created sucessfully');
+        // Защита оплаченного платежа
+        if (
+            $payment->status === 'succeeded' &&
+            $validated['status'] !== 'succeeded'
+        ) {
+            return back()->withErrors([
+                'status' => 'Нельзя отменить оплаченный платёж.',
+            ]);
         }
-        return redirect()->route('admin.tariffs.index')->with('error', 'Unable to create tariff. Try again');
+
+        $payment->update([
+            'status' => $validated['status'],
+            'paid_at' => $validated['status'] === 'succeeded'
+                ? ($payment->paid_at ?? now())
+                : $payment->paid_at,
+        ]);
+
+        return back()->with('success', 'Статус платежа обновлён.');
     }
 
     /**
-     * Управление модулями тарифа
+     * Удаление платежа
      */
-    public function show(Course $course)
+    public function destroy(Payment $payment)
     {
-        $course->load([
-            'modules' => function ($query) {
-                $query->withCount('lessons')->with('lessons')->orderBy('order');
+        $payment->delete();
+
+        return back()->with('success', 'Платёж удалён.');
+    }
+
+    /**
+     * Ручная выдача подписки
+     */
+    public function issueSubscription(Payment $payment)
+    {
+        DB::transaction(function () use ($payment) {
+
+            $payment = Payment::with('tariff', 'user')
+                ->lockForUpdate()
+                ->findOrFail($payment->id);
+
+            if ($payment->status !== 'succeeded') {
+                abort(422, 'Платёж ещё не оплачен.');
             }
-        ]);
 
-        return Inertia::render('Admin/Courses/Modules', [
-            'course' => $course
-        ]);
-    }
+            if ($payment->subscription_id || $payment->subscription()->exists()) {
+                abort(422, 'Подписка для этого платежа уже существует.');
+            }
 
-    /**
-     * Форма редактирования тарифа
-     */
-    public function edit(Tariff $tariff)
-    {
+            $tariff = $payment->tariff;
 
+            if (!$tariff) {
+                abort(422, 'Тариф не найден.');
+            }
 
-        return Inertia::render('Admin/Tariffs/form', [
-            'tariff' => $tariff,
-        ]);
+            if (!$payment->user) {
+                abort(422, 'Пользователь не найден.');
+            }
 
-    }
+            $subscription = Subscription::create([
+                'user_id' => $payment->user_id,
+                'tariff_id' => $payment->tariff_id,
+                'traffic_used' => 0,
+                'status' => 'active',
+                'starts_at' => now(),
+                'expires_at' => now()->addDays($tariff->duration_day),
+            ]);
 
-    /**
-     * Обновление тарифа
-     */
-    public function update(TariffFormRequest $request, Tariff $tariff)
-    {
+            $payment->update([
+                'subscription_id' => $subscription->id,
+            ]);
+        });
 
-        $tariff->update(
-            [
-                'name' => $request->name,
-                'descr' => $request->descr,
-                'max_devices' => $request->max_devices,
-                'duration_day' => $request->duration_day,
-                'price' => $request->price,
-                'old_price' => $request->old_price,
-                'updated_at' => now(),
-            ]
-        );
-
-        if ($tariff) {
-            return redirect()->route('admin.tariffs.index')->with('success', 'updated successfull');
-        }
-        return redirect()->route('admin.tariffs.index')->with('error', 'Unable to update tariff. Try again');
-    }
-
-    /**
-     * Удаление тарифа
-     */
-    public function destroy(Tariff $tariff)
-    {
-        $tariff->delete();
-
-        return redirect()->route('admin.tariffs.index')
-            ->with('success', 'Тариф удален успешно!');
-    }
-
-    /**
-     * Создание модуля
-     */
-    public function storeModule(Request $request, Course $course)
-    {
-        $validated = $request->validate([
-            'title' => 'required|string|max:255',
-            'slug' => 'required|string',
-            'description' => 'nullable|string',
-            'order' => 'integer',
-        ]);
-
-        $module = $course->modules()->create($validated);
-
-        return back()->with('success', 'Модуль создан успешно!');
-    }
-
-    /**
-     * Создание урока
-     */
-    public function storeLesson(Request $request, Module $module)
-    {
-        $validated = $request->validate([
-            'title' => 'required|string|max:255',
-            'slug' => 'required|string',
-            'content' => 'required|string',
-            'type' => 'required|in:theory,practice,quiz',
-            'order' => 'integer',
-            'estimated_time' => 'integer|min:1',
-        ]);
-
-        $lesson = $module->lessons()->create($validated);
-
-        return back()->with('success', 'Урок создан успешно!');
-    }
-
-    /**
-     * Форма редактирования урока
-     */
-    public function editLesson(Lesson $lesson)
-    {
-        $lesson->load(['module.course', 'exercises']);
-
-        return Inertia::render('Admin/Lessons/Edit', [
-            'lesson' => $lesson
-        ]);
-    }
-
-    /**
-     * Новый улучшенный редактор урока
-     */
-    public function editLessonNew(Lesson $lesson)
-    {
-        $lesson->load(['module.course', 'exercises']);
-
-        return Inertia::render('Admin/Lessons/EditNew', [
-            'lesson' => $lesson
-        ]);
-    }
-
-    /**
-     * Обновление урока
-     */
-    public function updateLesson(Request $request, Lesson $lesson)
-    {
-        $validated = $request->validate([
-            'title' => 'required|string|max:255',
-            'slug' => 'required|string',
-            'content' => 'required|string',
-            'type' => 'required|in:theory,practice,quiz',
-            'order' => 'integer',
-            'estimated_time' => 'integer|min:1',
-        ]);
-
-        $lesson->update($validated);
-
-        return back()->with('success', 'Урок обновлен успешно!');
-    }
-
-    /**
-     * Обновление модуля
-     */
-    public function updateModule(Request $request, Module $module)
-    {
-        $validated = $request->validate([
-            'title' => 'required|string|max:255',
-            'slug' => 'required|string',
-            'description' => 'nullable|string',
-            'order' => 'integer',
-        ]);
-
-        $module->update($validated);
-
-        return back()->with('success', 'Модуль обновлен успешно!');
-    }
-
-    /**
-     * Удаление модуля
-     */
-    public function destroyModule(Module $module)
-    {
-        $module->delete();
-
-        return back()->with('success', 'Модуль удален успешно!');
-    }
-
-    /**
-     * Удаление урока
-     */
-    public function destroyLesson(Lesson $lesson)
-    {
-        $lesson->delete();
-
-        return back()->with('success', 'Урок удален успешно!');
-    }
-
-    /**
-     * Создание упражнения
-     */
-    public function storeExercise(Request $request, Lesson $lesson)
-    {
-        $validated = $request->validate([
-            'title' => 'required|string|max:255',
-            'description' => 'required|string',
-            'starter_code' => 'nullable|string',
-            'solution' => 'nullable|string',
-            'hints' => 'nullable|array',
-            'test_cases' => 'nullable|array',
-            'language' => 'required|in:javascript,php',
-            'order' => 'integer',
-        ]);
-
-        $validated['hints'] = json_encode($validated['hints'] ?? []);
-        $validated['test_cases'] = json_encode($validated['test_cases'] ?? []);
-
-        $exercise = $lesson->exercises()->create($validated);
-
-        return back()->with('success', 'Упражнение создано успешно!');
+        return back()->with('success', 'Подписка успешно создана.');
     }
 }
-
